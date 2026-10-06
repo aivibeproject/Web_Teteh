@@ -9,18 +9,29 @@ declare global {
   }
 }
 
-const YOUTUBE_VIDEO_ID = '8GfDq1osBLM'; // YOASOBI - ハルジオン (Halzion)
-const SONG_NAME = 'YOASOBI - ハルジオン';
+const YOUTUBE_VIDEO_ID = 'BksBNbTIoPE'; // Jung Kook - Still With You
+const SONG_NAME = 'Jung Kook - Still With You';
 
 export function MusicPlayer() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
-  const [isReady, setIsReady] = useState(false);
   const playerRef = useRef<any>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Initialize YouTube IFrame Player
+  // Initialize YouTube IFrame Player with bulletproof automatic play
   useEffect(() => {
     let playerInstance: any = null;
+
+    const playViaIframeMessage = () => {
+      try {
+        if (iframeRef.current && iframeRef.current.contentWindow) {
+          iframeRef.current.contentWindow.postMessage(
+            JSON.stringify({ event: 'command', func: 'playVideo', args: '' }),
+            '*'
+          );
+        }
+      } catch {}
+    };
 
     const initPlayer = () => {
       if (!window.YT || !window.YT.Player) return;
@@ -44,7 +55,6 @@ export function MusicPlayer() {
           events: {
             onReady: (event: any) => {
               playerRef.current = event.target;
-              setIsReady(true);
               try {
                 event.target.playVideo();
                 setIsPlaying(true);
@@ -53,26 +63,25 @@ export function MusicPlayer() {
               }
             },
             onStateChange: (event: any) => {
-              // 1 = PLAYING, 2 = PAUSED, 0 = ENDED, 3 = BUFFERING
+              // 1 = PLAYING, 2 = PAUSED, 0 = ENDED
               if (event.data === 1) {
                 setIsPlaying(true);
               } else if (event.data === 2) {
                 setIsPlaying(false);
               } else if (event.data === 0) {
-                // Loop video
+                // Loop song
                 event.target.playVideo();
               }
             },
             onError: (err: any) => {
-              console.warn('YouTube embed restricted or network error, falling back to procedural lofi:', err);
-              // Fallback to procedural synth engine
+              console.warn('YouTube playback fallback:', err);
               lofiEngine.start();
               setIsPlaying(true);
             },
           },
         });
       } catch (err) {
-        console.error('Failed to create YouTube player:', err);
+        console.error('Failed to init YouTube player:', err);
         lofiEngine.start();
         setIsPlaying(true);
       }
@@ -81,7 +90,6 @@ export function MusicPlayer() {
     if (window.YT && window.YT.Player) {
       initPlayer();
     } else {
-      // Load the YouTube Iframe API asynchronously
       const existingScript = document.getElementById('yt-iframe-script');
       if (!existingScript) {
         const tag = document.createElement('script');
@@ -95,14 +103,16 @@ export function MusicPlayer() {
       };
     }
 
-    // Auto-resume on user first interaction to satisfy strict browser autoplay policies
+    // Attempt direct play immediately via message
+    playViaIframeMessage();
+
+    // Browser autoplay policy: automatically un-pause on the very first user interaction anywhere
     const handleFirstGesture = () => {
-      if (playerRef.current) {
+      playViaIframeMessage();
+      if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
         try {
-          if (playerRef.current.getPlayerState() !== 1) {
-            playerRef.current.playVideo();
-            setIsPlaying(true);
-          }
+          playerRef.current.playVideo();
+          setIsPlaying(true);
         } catch {
           lofiEngine.resume();
         }
@@ -141,9 +151,18 @@ export function MusicPlayer() {
           setIsPlaying(true);
         }
         return;
-      } catch {
-        // Fallback
-      }
+      } catch {}
+    }
+
+    // Toggle via iframe postMessage as secondary method
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      const command = isPlaying ? 'pauseVideo' : 'playVideo';
+      iframeRef.current.contentWindow.postMessage(
+        JSON.stringify({ event: 'command', func: command, args: '' }),
+        '*'
+      );
+      setIsPlaying(!isPlaying);
+      return;
     }
 
     // Fallback to procedural synth
@@ -166,6 +185,17 @@ export function MusicPlayer() {
       } catch {}
     }
 
+    // PostMessage mute toggle
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      const command = isMuted ? 'unMute' : 'mute';
+      iframeRef.current.contentWindow.postMessage(
+        JSON.stringify({ event: 'command', func: command, args: '' }),
+        '*'
+      );
+      setIsMuted(!isMuted);
+      return;
+    }
+
     // Fallback
     if (isMuted) {
       lofiEngine.setVolume(0.35);
@@ -183,7 +213,14 @@ export function MusicPlayer() {
         className="fixed bottom-0 right-0 w-1 h-1 opacity-0 pointer-events-none overflow-hidden z-[-1]"
         aria-hidden="true"
       >
-        <div id="youtube-music-player" />
+        <iframe
+          ref={iframeRef}
+          id="youtube-music-player"
+          src={`https://www.youtube.com/embed/${YOUTUBE_VIDEO_ID}?autoplay=1&loop=1&playlist=${YOUTUBE_VIDEO_ID}&enablejsapi=1&playsinline=1&controls=0`}
+          allow="autoplay; encrypted-media"
+          title="Background Music"
+          className="w-1 h-1 border-0"
+        />
       </div>
 
       {/* Floating Music Controls Widget */}
