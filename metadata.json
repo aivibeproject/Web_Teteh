@@ -1,0 +1,6 @@
+{
+  "name": "Undangan Video Call untuk Tetehku",
+  "description": "Undangan santai dan lucu untuk ngobrol video call bareng Tetehku dari Aa.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
