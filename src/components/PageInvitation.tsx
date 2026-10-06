@@ -29,13 +29,14 @@ export function PageInvitation({ onAccept }: PageInvitationProps) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const noBtnRef = useRef<HTMLButtonElement>(null);
+  const yesBtnRef = useRef<HTMLButtonElement>(null);
   const lastDodgeTime = useRef<number>(0);
 
-  // Function to move the NO button randomly within safe screen bounds
+  // Function to move the NO button randomly within safe screen bounds, avoiding YES button
   const moveNoButton = useCallback(() => {
     const now = Date.now();
     // Throttle slightly to keep animations pleasant and not chaotic
-    if (now - lastDodgeTime.current < 160) return;
+    if (now - lastDodgeTime.current < 180) return;
     lastDodgeTime.current = now;
 
     if (!noBtnRef.current) return;
@@ -45,7 +46,7 @@ export function PageInvitation({ onAccept }: PageInvitationProps) {
     const btnHeight = btnRect.height || 45;
 
     // Viewport dimensions with safe padding
-    const padding = 24;
+    const padding = 20;
     const screenW = window.innerWidth;
     const screenH = window.innerHeight;
 
@@ -55,9 +56,37 @@ export function PageInvitation({ onAccept }: PageInvitationProps) {
     const minTargetY = padding + 60; // leave top space
     const maxTargetY = screenH - btnHeight - padding;
 
-    // Generate random target within viewport bounds
-    const targetX = Math.random() * (maxTargetX - minTargetX) + minTargetX;
-    const targetY = Math.random() * (maxTargetY - minTargetY) + minTargetY;
+    // Get YES button position to ensure NO doesn't land on or near YES
+    const yesRect = yesBtnRef.current?.getBoundingClientRect();
+    const yesCenterX = yesRect ? yesRect.left + yesRect.width / 2 : screenW / 2;
+    const yesCenterY = yesRect ? yesRect.top + yesRect.height / 2 : screenH / 2;
+
+    let targetX = minTargetX;
+    let targetY = minTargetY;
+    let foundSafe = false;
+
+    // Find position with at least 140px clearance from YES button center
+    for (let i = 0; i < 15; i++) {
+      const candidateX = Math.random() * (maxTargetX - minTargetX) + minTargetX;
+      const candidateY = Math.random() * (maxTargetY - minTargetY) + minTargetY;
+      const candidateCenterX = candidateX + btnWidth / 2;
+      const candidateCenterY = candidateY + btnHeight / 2;
+
+      const distFromYes = Math.hypot(candidateCenterX - yesCenterX, candidateCenterY - yesCenterY);
+
+      if (distFromYes > 135) {
+        targetX = candidateX;
+        targetY = candidateY;
+        foundSafe = true;
+        break;
+      }
+    }
+
+    if (!foundSafe) {
+      // Deterministic fallback: place in opposite quadrant from YES
+      targetX = yesCenterX > screenW / 2 ? minTargetX : maxTargetX;
+      targetY = yesCenterY > screenH / 2 ? minTargetY : maxTargetY;
+    }
 
     // Compute relative delta from the original layout position of button
     const initialCenterX = btnRect.left - noPosition.x;
@@ -78,6 +107,12 @@ export function PageInvitation({ onAccept }: PageInvitationProps) {
       return next;
     });
   }, [noPosition.x, noPosition.y]);
+
+  const handleNoInteraction = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    moveNoButton();
+  };
 
   // Track mouse proximity to dodge before cursor lands directly on NO
   useEffect(() => {
@@ -100,13 +135,17 @@ export function PageInvitation({ onAccept }: PageInvitationProps) {
   }, [moveNoButton]);
 
   const handleYesClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    // Guard against accidental touch clicks during/immediately after dodging NO on mobile
+    if (Date.now() - lastDodgeTime.current < 450) {
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     triggerCuteConfetti(rect.left + rect.width / 2, rect.top + rect.height / 2);
     onAccept();
   };
 
   // Progressive scaling calculations for YES button
-  const yesScale = 1 + Math.min(noAttempts * 0.16, 1.25);
+  const yesScale = 1 + Math.min(noAttempts * 0.18, 1.3);
   // NO button shrinks slightly
   const noScale = Math.max(0.65, 1 - noAttempts * 0.06);
 
@@ -158,6 +197,7 @@ export function PageInvitation({ onAccept }: PageInvitationProps) {
             transition={{ type: 'spring', stiffness: 350, damping: 22 }}
           >
             <motion.button
+              ref={yesBtnRef}
               onClick={handleYesClick}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
@@ -225,9 +265,10 @@ export function PageInvitation({ onAccept }: PageInvitationProps) {
               ref={noBtnRef}
               type="button"
               onMouseEnter={moveNoButton}
-              onTouchStart={moveNoButton}
-              onClick={moveNoButton}
-              className={`px-5 py-2.5 rounded-full font-cute font-medium text-stone-500 bg-stone-100 hover:bg-stone-200 border border-stone-200/80 shadow-sm transition-colors cursor-pointer select-none text-sm sm:text-base ${
+              onTouchStart={handleNoInteraction}
+              onPointerDown={handleNoInteraction}
+              onClick={handleNoInteraction}
+              className={`px-5 py-2.5 rounded-full font-cute font-medium text-stone-500 bg-stone-100 hover:bg-stone-200 border border-stone-200/80 shadow-sm transition-colors cursor-pointer select-none text-sm sm:text-base touch-none ${
                 isWiggling ? 'animate-wiggle' : ''
               }`}
             >
