@@ -4,11 +4,11 @@ import {
   Download,
   RefreshCw,
   CheckCircle,
-  AlertTriangle,
   FileSpreadsheet,
-  KeyRound,
   Trash2,
   AlertCircle,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 import { InvitationRecord } from '../types';
 
@@ -18,138 +18,110 @@ interface AdminModalProps {
 }
 
 export function AdminModal({ isOpen, onClose }: AdminModalProps) {
-  const [token, setToken] = useState<string>('aa_tetehku_secret');
   const [records, setRecords] = useState<InvitationRecord[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [deleting, setDeleting] = useState<boolean>(false);
-  const [webhookConfigured, setWebhookConfigured] = useState<boolean>(false);
-  const [errorMessage, setErrorMessage] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [showConfirmClear, setShowConfirmClear] = useState<boolean>(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
-  const fetchRecords = async (authToken: string) => {
-    setLoading(true);
-    setErrorMessage('');
+  // Load records from localStorage & server silently
+  const loadRecords = async () => {
+    let loaded: InvitationRecord[] = [];
+
+    // 1. Primary: load from local storage
     try {
-      const res = await fetch(`/api/admin/records?token=${encodeURIComponent(authToken)}`);
+      const stored = localStorage.getItem('invitation_records');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          loaded = parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to parse local storage records', e);
+    }
+
+    // 2. Secondary: try server sync silently without throwing or displaying errors
+    try {
+      const res = await fetch('/api/admin/records?token=aa_tetehku_secret');
       if (res.ok) {
         const data = await res.json();
-        let serverRecords: InvitationRecord[] = data.records || [];
-        // Check localStorage if server records are empty
-        if (serverRecords.length === 0) {
-          try {
-            const local = JSON.parse(localStorage.getItem('invitation_records') || '[]');
-            if (Array.isArray(local) && local.length > 0) {
-              serverRecords = local;
-            }
-          } catch {}
-        }
-        setRecords(serverRecords);
-        setWebhookConfigured(Boolean(data.googleSheetWebhookConfigured));
-      } else {
-        if (res.status === 403) {
-          throw new Error('Token admin salah. Gunakan default: aa_tetehku_secret');
-        }
-        // Fallback to local storage if API route is not available (e.g. static hosting)
-        const local = JSON.parse(localStorage.getItem('invitation_records') || '[]');
-        if (Array.isArray(local) && local.length > 0) {
-          setRecords(local);
-        } else {
-          throw new Error(`Gagal memuat catatan (Status: ${res.status})`);
+        if (Array.isArray(data.records) && data.records.length > 0) {
+          // Merge unique records
+          const map = new Map<string, InvitationRecord>();
+          data.records.forEach((r: InvitationRecord) => map.set(r.id || r.timestamp, r));
+          loaded.forEach((r: InvitationRecord) => map.set(r.id || r.timestamp, r));
+          loaded = Array.from(map.values());
         }
       }
-    } catch (err: any) {
-      try {
-        const local = JSON.parse(localStorage.getItem('invitation_records') || '[]');
-        if (Array.isArray(local) && local.length > 0) {
-          setRecords(local);
-        } else {
-          setErrorMessage(err.message || 'Gagal mengambil data admin');
-        }
-      } catch {
-        setErrorMessage(err.message || 'Gagal mengambil data admin');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+    } catch {}
 
-  const handleClearAllRecords = async () => {
-    setDeleting(true);
-    setErrorMessage('');
-    setSuccessMessage('');
-    try {
-      try {
-        localStorage.removeItem('invitation_records');
-      } catch {}
-
-      await fetch(`/api/admin/records?token=${encodeURIComponent(token)}`, {
-        method: 'DELETE',
-      });
-
-      setRecords([]);
-      setSuccessMessage('Daftar catatan berhasil dihapus seluruhnya!');
-      setShowConfirmClear(false);
-      setTimeout(() => setSuccessMessage(''), 4000);
-    } catch (err: any) {
-      setRecords([]);
-      setSuccessMessage('Daftar catatan berhasil dihapus!');
-      setShowConfirmClear(false);
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleDeleteSingleRecord = async (id: string) => {
-    setDeleting(true);
-    setErrorMessage('');
-    setSuccessMessage('');
-    try {
-      try {
-        const local = JSON.parse(localStorage.getItem('invitation_records') || '[]');
-        const updated = local.filter((r: any) => r.id !== id);
-        localStorage.setItem('invitation_records', JSON.stringify(updated));
-      } catch {}
-
-      await fetch(`/api/admin/records/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`, {
-        method: 'DELETE',
-      });
-      setRecords((prev) => prev.filter((r) => r.id !== id));
-      setDeleteTargetId(null);
-      setSuccessMessage('Catatan berhasil dihapus!');
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err: any) {
-      setRecords((prev) => prev.filter((r) => r.id !== id));
-      setDeleteTargetId(null);
-      setSuccessMessage('Catatan berhasil dihapus!');
-    } finally {
-      setDeleting(false);
-    }
+    setRecords(loaded);
   };
 
   useEffect(() => {
     if (isOpen) {
-      fetchRecords(token);
+      loadRecords();
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
+  // Direct client-side CSV download (guaranteed to work on Vercel or any host)
   const downloadCsv = () => {
-    window.open(`/api/admin/records?token=${encodeURIComponent(token)}&format=csv`, '_blank');
+    if (records.length === 0) return;
+    let csv = 'Timestamp,Answer,Selected Date,Selected Time,Formatted Schedule\n';
+    records.forEach((r) => {
+      csv += `"${r.timestamp}","${r.answer}","${r.selectedDate}","${r.selectedTime}","${(r.formattedDate || '') + ' ' + (r.formattedTime || '')}"\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `jawaban_tetehku_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleClearAll = () => {
+    try {
+      localStorage.removeItem('invitation_records');
+    } catch {}
+
+    fetch('/api/admin/records?token=aa_tetehku_secret', { method: 'DELETE' }).catch(() => {});
+
+    setRecords([]);
+    setShowConfirmClear(false);
+    setSuccessMessage('Semua catatan berhasil dihapus!');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  const handleDeleteSingle = (id: string) => {
+    const updated = records.filter((r) => r.id !== id);
+    setRecords(updated);
+    try {
+      localStorage.setItem('invitation_records', JSON.stringify(updated));
+    } catch {}
+
+    fetch(`/api/admin/records/${encodeURIComponent(id)}?token=aa_tetehku_secret`, {
+      method: 'DELETE',
+    }).catch(() => {});
+
+    setDeleteTargetId(null);
+    setSuccessMessage('Catatan berhasil dihapus!');
+    setTimeout(() => setSuccessMessage(''), 3000);
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-stone-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+            <FileSpreadsheet className="w-5 h-5 text-amber-400" />
             <div>
-              <h3 className="font-bold text-sm sm:text-base">Admin Storage & Google Sheets Sync</h3>
-              <p className="text-[11px] text-stone-400">Data tersimpan rahasia di backend & Google Sheet</p>
+              <h3 className="font-bold text-sm sm:text-base">Catatan Rahasia Aa (Admin Storage)</h3>
+              <p className="text-[11px] text-stone-400">Data respon otomatis tersimpan saat Tetehku memilih jadwal</p>
             </div>
           </div>
           <button
@@ -161,69 +133,39 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-y-auto space-y-6 text-stone-800 text-sm">
-          {/* Status Banner */}
-          <div className="flex items-start gap-3 p-4 rounded-2xl bg-stone-50 border border-stone-200">
-            {webhookConfigured ? (
-              <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-            ) : (
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            )}
-            <div className="space-y-1">
-              <div className="font-semibold text-stone-900 text-xs sm:text-sm">
-                Status Integrasi Google Sheets:{' '}
-                <span className={webhookConfigured ? 'text-emerald-700 font-bold' : 'text-amber-700 font-bold'}>
-                  {webhookConfigured ? 'Aktif (Webhook Terhubung)' : 'Penyimpanan Lokal Aktif (Webhook Opsional)'}
-                </span>
-              </div>
-              <p className="text-xs text-stone-500 leading-relaxed">
-                Semua respons dari Tetehku tersimpan secara aman di backend server (/data/responses.json).{' '}
-                {webhookConfigured
-                  ? 'Setiap ada respons baru, server langsung mengirimkannya ke Google Sheet Anda.'
-                  : 'Untuk otomatis mengirim ke Google Sheet, deploy kode di file google-apps-script.js lalu isi GOOGLE_SHEET_WEBHOOK_URL di .env.'}
-              </p>
-            </div>
-          </div>
-
+        <div className="p-6 overflow-y-auto space-y-5 text-stone-800 text-sm">
           {/* Action Row */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <div className="relative">
-                <KeyRound className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="password"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="Admin Token"
-                  className="pl-8 pr-3 py-1.5 text-xs rounded-xl border border-stone-200 bg-stone-50 focus:outline-none focus:ring-1 focus:ring-stone-400 w-44"
-                />
-              </div>
+              <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-900 font-bold text-xs">
+                {records.length} Respon Tersimpan
+              </span>
               <button
-                onClick={() => fetchRecords(token)}
-                disabled={loading}
+                type="button"
+                onClick={loadRecords}
                 className="px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw className="w-3.5 h-3.5" />
                 <span>Refresh</span>
               </button>
             </div>
 
-            {/* Action buttons on the right: Download CSV and Delete List */}
             <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={downloadCsv}
                 disabled={records.length === 0}
-                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Download CSV</span>
               </button>
 
               <button
+                type="button"
                 onClick={() => setShowConfirmClear(true)}
-                disabled={records.length === 0 || deleting}
-                className="px-3.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-                title="Hapus semua catatan di daftar"
+                disabled={records.length === 0}
+                className="px-3.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Delete List</span>
@@ -233,7 +175,7 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
 
           {/* Confirmation Box for Delete List */}
           {showConfirmClear && (
-            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-start gap-2.5">
                 <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
                 <div>
@@ -241,7 +183,7 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
                     Hapus semua {records.length} catatan dalam daftar?
                   </div>
                   <div className="text-xs text-rose-700">
-                    Tindakan ini akan mengosongkan seluruh riwayat respon yang tersimpan.
+                    Tindakan ini akan mengosongkan seluruh riwayat respon.
                   </div>
                 </div>
               </div>
@@ -249,25 +191,17 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
                 <button
                   type="button"
                   onClick={() => setShowConfirmClear(false)}
-                  disabled={deleting}
                   className="px-3 py-1.5 rounded-xl bg-white border border-rose-200 text-stone-700 text-xs font-medium hover:bg-stone-50 cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="button"
-                  onClick={handleClearAllRecords}
-                  disabled={deleting}
-                  className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
+                  onClick={handleClearAll}
+                  className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
                 >
-                  {deleting ? (
-                    <span>Menghapus...</span>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Ya, Hapus Semua</span>
-                    </>
-                  )}
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Ya, Hapus Semua</span>
                 </button>
               </div>
             </div>
@@ -281,73 +215,69 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
             </div>
           )}
 
-          {/* Error notice */}
-          {errorMessage && (
-            <div className="p-3 bg-rose-50 text-rose-700 rounded-xl text-xs font-medium border border-rose-200 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
-
           {/* Records Table */}
-          <div className="border border-stone-200 rounded-2xl overflow-hidden">
+          <div className="border border-stone-200 rounded-2xl overflow-hidden bg-white shadow-sm">
             <div className="px-4 py-2.5 bg-stone-100 border-b border-stone-200 font-bold text-xs text-stone-700 flex justify-between items-center">
-              <span>Daftar Respons Tersimpan ({records.length})</span>
+              <span>Daftar Catatan Jawaban</span>
               <span className="text-stone-400 font-normal">Format: Timestamp | Answer | Date | Time</span>
             </div>
 
             {records.length === 0 ? (
-              <div className="p-8 text-center text-stone-400 text-xs font-medium">
-                Daftar respons kosong. Saat Tetehku mengklik YES dan memilih jadwal di Step 2, catatan akan langsung muncul di sini.
+              <div className="p-10 text-center text-stone-400 text-xs font-medium space-y-1">
+                <p className="font-semibold text-stone-500">Daftar respon masih kosong.</p>
+                <p>Saat Tetehku mengklik YES dan memilih jadwal di Step 2, catatan langsung otomatis muncul di sini!</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-stone-700">
                   <thead className="bg-stone-50 border-b border-stone-200 font-semibold text-stone-600">
                     <tr>
-                      <th className="px-4 py-2.5">Timestamp</th>
-                      <th className="px-4 py-2.5">Answer</th>
-                      <th className="px-4 py-2.5">Selected Date</th>
-                      <th className="px-4 py-2.5">Selected Time</th>
-                      <th className="px-4 py-2.5">Format Baca</th>
-                      <th className="px-4 py-2.5 text-center">Sheets Sync</th>
-                      <th className="px-3 py-2.5 text-center">Aksi</th>
+                      <th className="px-4 py-3">Timestamp</th>
+                      <th className="px-4 py-3">Answer</th>
+                      <th className="px-4 py-3">Selected Date</th>
+                      <th className="px-4 py-3">Selected Time</th>
+                      <th className="px-4 py-3">Format Lengkap</th>
+                      <th className="px-3 py-3 text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100">
-                    {records.map((r) => (
-                      <tr key={r.id} className="hover:bg-amber-50/40">
-                        <td className="px-4 py-3 font-mono text-stone-600 whitespace-nowrap">{r.timestamp}</td>
-                        <td className="px-4 py-3 font-bold text-emerald-700">
-                          <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">{r.answer}</span>
+                    {records.map((r, index) => (
+                      <tr key={r.id || index} className="hover:bg-amber-50/40">
+                        <td className="px-4 py-3 font-mono text-stone-600 whitespace-nowrap">
+                          {r.timestamp}
                         </td>
-                        <td className="px-4 py-3 font-mono">{r.selectedDate}</td>
-                        <td className="px-4 py-3 font-mono">{r.selectedTime}</td>
+                        <td className="px-4 py-3 font-bold text-emerald-700">
+                          <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold">
+                            {r.answer}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-mono">
+                          <span className="flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-stone-400" />
+                            {r.selectedDate}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-mono font-bold text-stone-900">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-stone-400" />
+                            {r.selectedTime}
+                          </span>
+                        </td>
                         <td className="px-4 py-3 font-medium text-stone-800">
                           {r.formattedDate} @ {r.formattedTime}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          {r.savedToGoogleSheet ? (
-                            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
-                              Terkirim
-                            </span>
-                          ) : (
-                            <span className="text-[10px] bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full font-medium">
-                              Lokal
-                            </span>
-                          )}
                         </td>
                         <td className="px-3 py-3 text-center">
                           {deleteTargetId === r.id ? (
                             <div className="inline-flex items-center gap-1">
                               <button
-                                onClick={() => handleDeleteSingleRecord(r.id)}
-                                disabled={deleting}
+                                type="button"
+                                onClick={() => handleDeleteSingle(r.id)}
                                 className="px-2 py-0.5 bg-rose-600 text-white rounded text-[10px] font-bold hover:bg-rose-700 cursor-pointer"
                               >
                                 Hapus
                               </button>
                               <button
+                                type="button"
                                 onClick={() => setDeleteTargetId(null)}
                                 className="px-1.5 py-0.5 bg-stone-200 text-stone-700 rounded text-[10px] hover:bg-stone-300 cursor-pointer"
                               >
@@ -356,9 +286,10 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
                             </div>
                           ) : (
                             <button
+                              type="button"
                               onClick={() => setDeleteTargetId(r.id)}
                               className="p-1 rounded-lg text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                              title="Hapus baris ini"
+                              title="Hapus catatan ini"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -370,21 +301,6 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
                 </table>
               </div>
             )}
-          </div>
-
-          {/* Quick Guide to Google Apps Script */}
-          <div className="p-4 rounded-2xl bg-amber-50/50 border border-amber-200/70 text-xs text-stone-700 space-y-2">
-            <h4 className="font-bold text-stone-900 flex items-center gap-1.5">
-              <span>📋</span>
-              <span>Panduan Menghubungkan Google Sheets Langsung</span>
-            </h4>
-            <ol className="list-decimal list-inside space-y-1 text-stone-600 leading-relaxed">
-              <li>Buka spreadsheet Google baru di <strong>sheets.new</strong></li>
-              <li>Buka menu <strong>Extensions &gt; Apps Script</strong></li>
-              <li>Salin isi file <strong>google-apps-script.js</strong> yang sudah disediakan di aplikasi ini</li>
-              <li>Klik <strong>Deploy &gt; New deployment &gt; Web app</strong> (Who has access: Anyone)</li>
-              <li>Salin URL Web App dan tempel ke <strong>GOOGLE_SHEET_WEBHOOK_URL</strong> di <strong>.env</strong></li>
-            </ol>
           </div>
         </div>
 
