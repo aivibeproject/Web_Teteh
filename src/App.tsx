@@ -11,7 +11,8 @@ import { PageFinal } from './components/PageFinal';
 import { FloatingDecorations } from './components/FloatingDecorations';
 import { AdminModal } from './components/AdminModal';
 import { MusicPlayer } from './components/MusicPlayer';
-import { ScheduleData } from './types';
+import { ScheduleData, InvitationRecord } from './types';
+import { saveCloudRecord } from './utils/cloudSync';
 
 export default function App() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -45,47 +46,26 @@ export default function App() {
   const handleConfirmSchedule = async (selectedSchedule: ScheduleData) => {
     setSchedule(selectedSchedule);
 
-    // Secretly save response to backend (which forwards to Google Sheets)
-    try {
-      const nowStr = new Date()
-        .toLocaleString('sv-SE', { timeZone: 'Asia/Jakarta' })
-        .replace('T', ' ')
-        .slice(0, 16);
+    // Save response to cloud storage (syncs across phone and laptop)
+    const nowStr = new Date()
+      .toLocaleString('sv-SE', { timeZone: 'Asia/Jakarta' })
+      .replace('T', ' ')
+      .slice(0, 16);
 
-      const localRecord = {
-        id: Date.now().toString(36),
-        timestamp: nowStr,
-        answer: 'YES',
-        selectedDate: selectedSchedule.date,
-        selectedTime: selectedSchedule.time,
-        formattedDate: selectedSchedule.formattedDate,
-        formattedTime: selectedSchedule.formattedTime,
-        savedToGoogleSheet: false,
-      };
+    const record: InvitationRecord = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      timestamp: nowStr,
+      answer: 'YES',
+      selectedDate: selectedSchedule.date,
+      selectedTime: selectedSchedule.time,
+      formattedDate: selectedSchedule.formattedDate,
+      formattedTime: selectedSchedule.formattedTime,
+      notes: 'Tetehku confirmed video call!',
+      savedToGoogleSheet: false,
+    };
 
-      try {
-        const stored = JSON.parse(localStorage.getItem('invitation_records') || '[]');
-        stored.unshift(localRecord);
-        localStorage.setItem('invitation_records', JSON.stringify(stored));
-      } catch {}
-
-      await fetch('/api/save-response', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          answer: 'YES',
-          selectedDate: selectedSchedule.date,
-          selectedTime: selectedSchedule.time,
-          formattedDate: selectedSchedule.formattedDate,
-          formattedTime: selectedSchedule.formattedTime,
-          timestamp: nowStr,
-        }),
-      });
-    } catch (err) {
-      console.warn('Network error when recording response (handled silently):', err);
-    }
+    // Save to cloud so Aa immediately sees it on laptop
+    saveCloudRecord(record);
 
     // Transition smoothly to Page 3
     setStep(3);

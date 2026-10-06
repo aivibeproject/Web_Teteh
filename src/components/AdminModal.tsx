@@ -11,6 +11,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { InvitationRecord } from '../types';
+import { getCloudRecords, clearCloudRecords, deleteSingleRecord } from '../utils/cloudSync';
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -19,43 +20,22 @@ interface AdminModalProps {
 
 export function AdminModal({ isOpen, onClose }: AdminModalProps) {
   const [records, setRecords] = useState<InvitationRecord[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [showConfirmClear, setShowConfirmClear] = useState<boolean>(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
-  // Load records from localStorage & server silently
+  // Load records synchronized across all devices
   const loadRecords = async () => {
-    let loaded: InvitationRecord[] = [];
-
-    // 1. Primary: load from local storage
+    setLoading(true);
     try {
-      const stored = localStorage.getItem('invitation_records');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          loaded = parsed;
-        }
-      }
+      const data = await getCloudRecords();
+      setRecords(data);
     } catch (e) {
-      console.warn('Failed to parse local storage records', e);
+      console.warn('Failed to load records:', e);
+    } finally {
+      setLoading(false);
     }
-
-    // 2. Secondary: try server sync silently without throwing or displaying errors
-    try {
-      const res = await fetch('/api/admin/records?token=aa_tetehku_secret');
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.records) && data.records.length > 0) {
-          // Merge unique records
-          const map = new Map<string, InvitationRecord>();
-          data.records.forEach((r: InvitationRecord) => map.set(r.id || r.timestamp, r));
-          loaded.forEach((r: InvitationRecord) => map.set(r.id || r.timestamp, r));
-          loaded = Array.from(map.values());
-        }
-      }
-    } catch {}
-
-    setRecords(loaded);
   };
 
   useEffect(() => {
@@ -83,30 +63,17 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
     document.body.removeChild(link);
   };
 
-  const handleClearAll = () => {
-    try {
-      localStorage.removeItem('invitation_records');
-    } catch {}
-
-    fetch('/api/admin/records?token=aa_tetehku_secret', { method: 'DELETE' }).catch(() => {});
-
+  const handleClearAll = async () => {
+    await clearCloudRecords();
     setRecords([]);
     setShowConfirmClear(false);
     setSuccessMessage('Semua catatan berhasil dihapus!');
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  const handleDeleteSingle = (id: string) => {
-    const updated = records.filter((r) => r.id !== id);
+  const handleDeleteSingle = async (id: string) => {
+    const updated = await deleteSingleRecord(id);
     setRecords(updated);
-    try {
-      localStorage.setItem('invitation_records', JSON.stringify(updated));
-    } catch {}
-
-    fetch(`/api/admin/records/${encodeURIComponent(id)}?token=aa_tetehku_secret`, {
-      method: 'DELETE',
-    }).catch(() => {});
-
     setDeleteTargetId(null);
     setSuccessMessage('Catatan berhasil dihapus!');
     setTimeout(() => setSuccessMessage(''), 3000);
@@ -143,9 +110,10 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
               <button
                 type="button"
                 onClick={loadRecords}
-                className="px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                disabled={loading}
+                className="px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                 <span>Refresh</span>
               </button>
             </div>
